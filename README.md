@@ -6,12 +6,12 @@
 **知识地图 → 学习路径 → 资源 → 验收 → 复盘 → 质量检查**。数据全部是存在你本机的
 Markdown 文件，不注册账号、不上传云端。
 
-[![Windows 一键安装](https://img.shields.io/badge/Windows-One--Click-2f6b4f?style=for-the-badge&logo=windows)](releases/latest)
-[![macOS 下载](https://img.shields.io/badge/macOS-Download-1f2328?style=for-the-badge&logo=apple)](releases/latest)
-[![Linux 下载](https://img.shields.io/badge/Linux-Download-f6c915?style=for-the-badge&logo=linux&logoColor=black)](releases/latest)
+[![Windows 一键安装](https://img.shields.io/badge/Windows-One--Click-2f6b4f?style=for-the-badge&logo=windows)](https://github.com/JJS-Sudo/SELF-/releases/latest)
+[![macOS 下载](https://img.shields.io/badge/macOS-Download-1f2328?style=for-the-badge&logo=apple)](https://github.com/JJS-Sudo/SELF-/releases/latest)
+[![Linux 下载](https://img.shields.io/badge/Linux-Download-f6c915?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/JJS-Sudo/SELF-/releases/latest)
 
 Windows 下载后**双击即装**（一键安装）；免安装单文件、macOS / Linux 包与**微信传输版**
-都在 [Releases](releases/latest) 页面。
+都在 [Releases](https://github.com/JJS-Sudo/SELF-/releases/latest) 页面。
 
 > **授权：源码可见，非商业使用免费。** 本项目使用
 > [PolyForm Noncommercial 1.0.0](LICENSE)：个人学习、研究、教学等非商业用途可免费使用与修改；
