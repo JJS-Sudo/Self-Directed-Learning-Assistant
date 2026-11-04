@@ -8,6 +8,11 @@ export interface PathQuestionDto {
   nodeId?: string
 }
 
+export interface PathStageNodeDto {
+  id: string
+  title: string
+}
+
 export interface PathStageResourceDto {
   id: string
   title: string
@@ -17,6 +22,11 @@ export interface PathStageResourceDto {
   durationMin?: number
   level: string
   media: string
+  /** 资源挂载的节点；共享资源会在多个节点下重复出现 */
+  nodeId?: string
+  nodeTitle?: string
+  /** 平台搜索页兜底链接 */
+  unverified?: boolean
 }
 
 export interface PathStageDto {
@@ -27,6 +37,7 @@ export interface PathStageDto {
   deliverable?: string
   checks: string[]
   nodeIds: string[]
+  nodes: PathStageNodeDto[]
   questionIds: string[]
   questions: PathQuestionDto[]
   resources: PathStageResourceDto[]

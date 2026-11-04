@@ -15,6 +15,9 @@ export const MANAGED_DIRS = ['00-配置', '10-目标', '20-学习项目', '40-�
 /** 目标分区所在目录（每个目标一个子目录，下辖知识网 / 学习路径 / 验收 / 复盘） */
 export const AREAS_DIR = '20-学习项目'
 
+/** 软删除回收站；不在库骨架里，按需创建 */
+export const TRASH_DIR = '99-回收站'
+
 export interface ResolveOptions {
   env?: NodeJS.ProcessEnv
   cwd?: string

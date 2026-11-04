@@ -13,4 +13,6 @@ export interface GoalListItem {
   daysLeft?: number
   successCriteria?: string
   createdAt: string
+  /** 最近一次修改时间；旧目标可能缺省 */
+  updatedAt?: string
 }

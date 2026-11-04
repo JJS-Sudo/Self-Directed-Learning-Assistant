@@ -171,8 +171,8 @@ describe('资源 API', () => {
     expect(body.profile.mediaPreference).toBeDefined()
   })
 
-  it('重复 URL 被跳过，reason 说明挂在哪里', async () => {
-    const { goalId, nodes, app } = setup()
+  it('重复 URL 关联到新节点，不新建文件', async () => {
+    const { root, goalId, nodes, app } = setup()
     const item = {
       nodeId: nodes.a.id,
       title: '最小二乘 B 站视频',
@@ -188,11 +188,15 @@ describe('资源 API', () => {
 
     const body = (await again.json()) as {
       created: number
+      linked: number
       skipped: { url: string; reason: string }[]
     }
     expect(body.created).toBe(0)
-    expect(body.skipped).toHaveLength(1)
-    expect(body.skipped[0]?.reason).toContain('最小二乘估计')
+    expect(body.linked).toBe(1)
+    expect(body.skipped).toHaveLength(0)
+    const resources = listResources(root)
+    expect(resources).toHaveLength(1)
+    expect(resources[0]?.nodeIds).toEqual([nodes.a.id, nodes.b.id])
   })
 
   it('等级不在词表：400', async () => {

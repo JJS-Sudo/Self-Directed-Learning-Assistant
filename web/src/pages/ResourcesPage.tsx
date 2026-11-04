@@ -3,8 +3,16 @@ import type { GoalListItem } from '@shared/goals'
 import type { MapNodeDto } from '@shared/map'
 import type { ResourceCandidateDto, ResourcePreviewDto, ResourceViewDto } from '@shared/resources'
 import { ResourceCandidateList } from '../components/ResourceCandidateList'
+import { streamAutoResources, type AutoResourceEvent } from '../lib/stream'
 
-type Busy = null | 'search' | 'commit'
+type Busy = null | 'search' | 'commit' | 'auto'
+type ResourceFilter = 'all' | 'verified' | 'unverified'
+
+interface AutoProgress {
+  done: number
+  total: number
+  nodeTitle: string
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -31,6 +39,8 @@ export function ResourcesPage() {
   const [busy, setBusy] = useState<Busy>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [filter, setFilter] = useState<ResourceFilter>('all')
+  const [autoProgress, setAutoProgress] = useState<AutoProgress | null>(null)
 
   const loadResources = useCallback(async (id: string) => {
     if (id === '') return
@@ -78,9 +88,60 @@ export function ResourcesPage() {
     setPickedNodes((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
-      else if (next.size < 5) next.add(id)
+      else next.add(id)
       return next
     })
+  }
+
+  const runAutoFill = async (): Promise<void> => {
+    setError(null)
+    setNotice(null)
+    setBusy('auto')
+    setAutoProgress(null)
+    try {
+      await streamAutoResources(goalId, { mode: 'fill' }, (event: AutoResourceEvent) => {
+        if (event.type === 'start') {
+          setAutoProgress({ done: 0, total: event.total ?? 0, nodeTitle: '' })
+        } else if (event.type === 'progress') {
+          setAutoProgress({
+            done: event.done ?? 0,
+            total: event.total ?? 0,
+            nodeTitle: event.nodeTitle ?? '',
+          })
+        } else if (event.type === 'warning' && event.message !== undefined) {
+          setNotice(event.message)
+        } else if (event.type === 'done') {
+          setNotice(
+            `自动补齐：新增 ${event.created ?? 0} 条、共享 ${event.linked ?? 0} 条、跳过 ${
+              event.skipped ?? 0
+            } 条${(event.failures ?? 0) > 0 ? `、${event.failures} 个节点未找到` : ''}`,
+          )
+        } else if (event.type === 'error') {
+          setError(event.message ?? '自动补齐失败')
+        }
+      })
+      await loadResources(goalId)
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(null)
+      setAutoProgress(null)
+    }
+  }
+
+  const removeResource = async (id: string, title: string): Promise<void> => {
+    if (!window.confirm(`删除资源「${title}」？`)) return
+    setError(null)
+    try {
+      const response = await fetch(`/api/resources/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) throw new Error(await readError(response))
+      setNotice(`已删除「${title}」`)
+      await loadResources(goalId)
+    } catch (cause) {
+      setError(messageOf(cause))
+    }
   }
 
   const runSearch = async (): Promise<void> => {
@@ -179,10 +240,15 @@ export function ResourcesPage() {
     }
   }
 
+  const visibleResources = (view?.resources ?? []).filter((resource) => {
+    if (filter === 'all') return true
+    return filter === 'unverified' ? resource.unverified === true : resource.unverified !== true
+  })
+
   return (
     <section className="area">
       <h1 className="area-title">资源</h1>
-      <p className="lede">只收录真实存在的链接；排序理由按你的画像实时计算。</p>
+      <p className="lede">路径落盘后会自动为每个节点找资源；这里用于总览、手动补检与删除。</p>
 
       {goals.length === 0 && <p className="hint">还没有目标。先去「目标」建一个，再回来找资源。</p>}
 
@@ -200,7 +266,7 @@ export function ResourcesPage() {
           </label>
 
           <div className="node-picker">
-            <p className="upcoming-label">选节点检索（最多 5 个）</p>
+            <p className="upcoming-label">选节点手动检索（不限个数）</p>
             {nodes.length === 0 ? (
               <p className="hint">这个目标还没有知识节点，先在地图页生成。</p>
             ) : (
@@ -230,7 +296,35 @@ export function ResourcesPage() {
             >
               {busy === 'search' ? '检索中…' : `检索候选（${pickedNodes.size} 个节点）`}
             </button>
+            <button
+              type="button"
+              className="button"
+              disabled={busy !== null}
+              onClick={() => void runAutoFill()}
+            >
+              {busy === 'auto' ? '补齐中…' : '补齐缺失资源'}
+            </button>
           </div>
+
+          {busy === 'auto' && autoProgress !== null && (
+            <div className="resource-progress" aria-live="polite">
+              <p className="hint">
+                正在为 {autoProgress.done}/{autoProgress.total} 个节点找资源
+                {autoProgress.nodeTitle === '' ? '' : `：${autoProgress.nodeTitle}`}
+              </p>
+              <div className="progress-track">
+                <div
+                  className="progress-fill"
+                  style={{
+                    width:
+                      autoProgress.total === 0
+                        ? '0%'
+                        : `${Math.round((autoProgress.done / autoProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           {error !== null && (
             <p className="form-error" role="alert">
@@ -283,28 +377,49 @@ export function ResourcesPage() {
       )}
 
       <div className="map-view">
-        <p className="upcoming-label">
-          已收录资源（{view?.resources.length ?? 0} 条）
-          {view === null
-            ? ''
-            : ` · 画像：${view.profile.level} / ${view.profile.mediaPreference} / 每周 ${view.profile.timeBudget} 小时`}
-        </p>
+        <div className="resource-overview-head">
+          <p className="upcoming-label">
+            已收录资源（{view?.resources.length ?? 0} 条）
+            {view === null
+              ? ''
+              : ` · 画像：${view.profile.level} / ${view.profile.mediaPreference} / 每周 ${view.profile.timeBudget} 小时`}
+          </p>
+          <label className="field">
+            <span>筛选</span>
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as ResourceFilter)}
+            >
+              <option value="all">全部</option>
+              <option value="verified">已验证</option>
+              <option value="unverified">未验证（搜索页）</option>
+            </select>
+          </label>
+        </div>
 
         {view !== null && view.resources.length === 0 && (
-          <p className="hint">还没有资源。检索并落盘后会出现在这里。</p>
+          <p className="hint">还没有资源。生成路径后会自动补齐，也可以在上方手动检索。</p>
         )}
 
         <ul className="resource-list">
-          {view?.resources.map((resource) => (
+          {visibleResources.map((resource) => (
             <li key={resource.id} className="resource-item">
               <p className="resource-head">
                 <span className="resource-item-title">{resource.title}</span>
+                {resource.unverified === true && <span className="badge-warn">未验证</span>}
                 <span className="phase-tag">{resource.media}</span>
                 <span className="phase-tag">{resource.level}</span>
                 {resource.durationMin !== undefined && (
                   <span className="hint">{resource.durationMin} 分钟</span>
                 )}
                 <span className="resource-score">{resource.score.toFixed(2)}</span>
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => void removeResource(resource.id, resource.title)}
+                >
+                  删除
+                </button>
               </p>
               {resource.url !== undefined && (
                 <a className="resource-url" href={resource.url} target="_blank" rel="noreferrer">
@@ -312,7 +427,9 @@ export function ResourcesPage() {
                 </a>
               )}
               <p className="rank-reason">
-                {resource.nodeTitle === undefined ? '' : `节点：${resource.nodeTitle} · `}
+                {resource.nodeTitle === undefined ? '' : `节点：${resource.nodeTitle}`}
+                {(resource.nodeIds?.length ?? 0) > 1 ? ` 等 ${resource.nodeIds.length} 个节点` : ''}
+                {resource.nodeTitle === undefined ? '' : ' · '}
                 {resource.rankReason}
               </p>
             </li>

@@ -1,8 +1,13 @@
+import { existsSync, renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Frontmatter } from '../vault/document.js'
+import { sanitizeFileName, serializeDocument } from '../vault/document.js'
 import { VaultError } from '../vault/errors.js'
-import { listDocuments, updateDocument, writeDocument } from '../vault/io.js'
-import { GOAL_KINDS, assertOneOf } from './vocabulary.js'
-import { optionalText, requireCalendarDate, todayLocal } from './validate.js'
+import { findAreaName } from '../vault/goal-areas.js'
+import { AREAS_DIR, resolveInsideVault } from '../vault/paths.js'
+import { listDocuments, readDocument, updateDocument, writeDocument } from '../vault/io.js'
+import { GOAL_KINDS, GOAL_STATUSES, assertOneOf } from './vocabulary.js'
+import { optionalText, requireCalendarDate, requireText, todayLocal } from './validate.js'
 
 export const GOALS_DIR = '10-目标'
 
@@ -21,6 +26,16 @@ export interface GoalSummary {
   budgetCny?: number
   relativePath: string
   createdAt: string
+  /** 最近一次修改时间；旧文件回退为 createdAt */
+  updatedAt?: string
+}
+
+export interface UpdateGoalPatch {
+  title?: string
+  successCriteria?: string | null
+  kind?: string
+  deadline?: string | null
+  status?: string
 }
 
 export interface CreateGoalInput {
@@ -54,7 +69,7 @@ export function createGoal(input: CreateGoalInput): GoalSummary {
     )
   }
 
-  const frontmatter: Frontmatter = { status: '在用', kind }
+  const frontmatter: Frontmatter = { status: '在用', kind, updated_at: new Date().toISOString() }
   const criteria = input.successCriteria?.trim()
   if (criteria !== undefined && criteria !== '') {
     frontmatter['success_criteria'] = criteria
@@ -128,6 +143,7 @@ function toGoalSummary(relativePath: string, data: Frontmatter, today: string): 
     kind: typeof data['kind'] === 'string' && data['kind'] !== '' ? data['kind'] : '常规',
     relativePath,
     createdAt: String(data['created_at'] ?? ''),
+    updatedAt: String(data['updated_at'] ?? data['created_at'] ?? ''),
   }
   if (deadline !== undefined && deadline !== '') {
     summary.deadline = deadline
@@ -155,4 +171,96 @@ export function setGoalBudget(root: string, id: string, budgetCny: number | null
     frontmatter: { budget_cny: budgetCny === null ? null : budgetCny },
   })
   return requireGoal(root, id)
+}
+
+/**
+ * 修改目标。改标题时同时改目标文件与学习项目分区目录，id 不变。
+ * 返回更新后的目标；任何一步失败都抛出 VaultError。
+ */
+export function updateGoal(root: string, id: string, patch: UpdateGoalPatch): GoalSummary {
+  const goal = requireGoal(root, id)
+  const touched = Object.values(patch).some((value) => value !== undefined)
+  if (!touched) throw new VaultError('INVALID_INPUT', '至少修改一个字段')
+
+  const title = patch.title === undefined ? goal.title : requireText(patch.title, 'title')
+  if (title.length > 200) throw new VaultError('INVALID_INPUT', '标题最长 200 字')
+  const kind = patch.kind === undefined ? goal.kind : assertOneOf(GOAL_KINDS, patch.kind, 'kind')
+
+  let deadline = goal.deadline
+  if (patch.deadline !== undefined) {
+    deadline =
+      patch.deadline === null || patch.deadline.trim() === ''
+        ? undefined
+        : requireCalendarDate(patch.deadline, 'deadline')
+  }
+  if (kind === '激励性' && deadline === undefined) {
+    throw new VaultError('INVALID_INPUT', '激励性目标必须有期限（deadline）')
+  }
+
+  let successCriteria = goal.successCriteria
+  if (patch.successCriteria !== undefined) {
+    const value = patch.successCriteria === null ? '' : patch.successCriteria.trim()
+    if (value.length > 500) throw new VaultError('INVALID_INPUT', '成功判据最长 500 字')
+    successCriteria = value === '' ? undefined : value
+  }
+
+  const status =
+    patch.status === undefined ? goal.status : assertOneOf(GOAL_STATUSES, patch.status, 'status')
+
+  const relativePath = renameGoalStorage(root, goal, title)
+  const doc = readDocument(root, relativePath)
+  const data: Frontmatter = {
+    ...doc.data,
+    title,
+    kind,
+    status,
+    updated_at: new Date().toISOString(),
+  }
+  if (successCriteria === undefined) delete data['success_criteria']
+  else data['success_criteria'] = successCriteria
+  if (deadline === undefined) delete data['deadline']
+  else data['deadline'] = deadline
+
+  writeFileSync(
+    resolveInsideVault(root, relativePath),
+    serializeDocument(data, doc.content),
+    'utf8',
+  )
+  return requireGoal(root, id)
+}
+
+/** 目标文件与分区目录一起改名；冲突在移动前拒绝，第二步失败会回滚第一步 */
+function renameGoalStorage(root: string, goal: GoalSummary, nextTitle: string): string {
+  if (nextTitle === goal.title) return goal.relativePath
+
+  const safe = sanitizeFileName(nextTitle)
+  const nextRelativePath = join(GOALS_DIR, `${goal.id} ${safe}.md`)
+  const nextGoalAbs = join(root, nextRelativePath)
+  const oldGoalAbs = join(root, goal.relativePath)
+
+  const oldAreaName = findAreaName(root, goal.id)
+  const nextAreaName = `${goal.id} ${safe}`
+  const nextAreaAbs = join(root, AREAS_DIR, nextAreaName)
+  const oldAreaAbs = oldAreaName === undefined ? undefined : join(root, AREAS_DIR, oldAreaName)
+
+  if (nextRelativePath !== goal.relativePath && existsSync(nextGoalAbs)) {
+    throw new VaultError('CONFLICT', `目标文件已存在：${nextRelativePath}`)
+  }
+  if (oldAreaAbs !== undefined && nextAreaName !== oldAreaName && existsSync(nextAreaAbs)) {
+    throw new VaultError('CONFLICT', `目标分区已存在：${nextAreaName}`)
+  }
+
+  const movedGoal = nextRelativePath !== goal.relativePath
+  if (movedGoal) renameSync(oldGoalAbs, nextGoalAbs)
+
+  if (oldAreaAbs !== undefined && nextAreaName !== oldAreaName) {
+    try {
+      renameSync(oldAreaAbs, nextAreaAbs)
+    } catch (error) {
+      if (movedGoal) renameSync(nextGoalAbs, oldGoalAbs)
+      throw error
+    }
+  }
+
+  return nextRelativePath
 }

@@ -24,6 +24,8 @@ export interface ResourceDto {
   url?: string
   nodeId?: string
   nodeTitle?: string
+  nodeIds: string[]
+  unverified?: boolean
   level: string
   media: string
   durationMin?: number

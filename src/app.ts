@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { Hono, type Context } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { createGoalSchema, formatZodError, toGoalListItem } from './api/goals.js'
+import { streamSSE } from 'hono/streaming'
+import { createGoalSchema, formatZodError, toGoalListItem, updateGoalSchema } from './api/goals.js'
 import { buildHealthReport } from './api/health.js'
 import {
   toEdgeDtos,
@@ -16,7 +17,12 @@ import {
   nodePatchSchema,
   toMapNodeDto,
 } from './api/map.js'
-import { commitResourcesSchema, previewResourcesSchema, toResourceDto } from './api/resources.js'
+import {
+  autoResourcesSchema,
+  commitResourcesSchema,
+  previewResourcesSchema,
+  toResourceDto,
+} from './api/resources.js'
 import {
   createRetrospectiveSchema,
   submitSessionSchema,
@@ -24,7 +30,8 @@ import {
   toRetrospectiveDto,
 } from './api/assessments.js'
 import { pathCommitSchema, toGeneratedStages, toQuestionDto, toStageDto } from './api/path.js'
-import { createGoal, listGoals, requireGoal, setGoalBudget } from './domain/goals.js'
+import { createGoal, listGoals, requireGoal, setGoalBudget, updateGoal } from './domain/goals.js'
+import { listTrash, purgeTrash, restoreTrash, trashGoal } from './domain/goal-trash.js'
 import { listAssessments, listSession, requireAssessment } from './domain/assessments.js'
 import { listAllNodes, listNodes, requireNode } from './domain/nodes.js'
 import { addLink, createNode, removeLink, updateNode } from './domain/nodes.js'
@@ -33,7 +40,7 @@ import { readLayout, writeLayout } from './domain/layout.js'
 import { listStages } from './domain/path-stages.js'
 import { readProfileOrDefault } from './domain/profile.js'
 import { listQuestions } from './domain/questions.js'
-import { listResourcesRanked } from './domain/resources.js'
+import { deleteResource, listAllResources, listResourcesRanked } from './domain/resources.js'
 import { createRetrospective, listRetrospectives } from './domain/retrospectives.js'
 import { todayLocal } from './domain/validate.js'
 import { readGoals } from './index-db/goals-index.js'
@@ -50,6 +57,7 @@ import { generateSelfCandidates } from './map-gen/self.js'
 import { estimatePath } from './path-gen/estimate.js'
 import { generatePath } from './path-gen/generate.js'
 import { persistPath } from './path-gen/persist.js'
+import { autoResources } from './resource-search/auto.js'
 import { previewResources } from './resource-search/preview.js'
 import { persistResources } from './resource-search/persist.js'
 import { submitSession } from './assessments/session.js'
@@ -175,7 +183,19 @@ export function createApp(options: AppOptions = {}): Hono {
   const indexHtml = options.webRoot === undefined ? null : readIndexHtml(options.webRoot)
   if (options.webRoot !== undefined) {
     app.use('/assets/*', serveStatic({ root: options.webRoot }))
+    app.use('/assets/*', async (c, next) => {
+      await next()
+      c.res.headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+    })
   }
+
+  /** 入口 HTML 绝不缓存：否则升级后浏览器会继续引用已删除的旧 hash 资源 */
+  app.use('*', async (c, next) => {
+    await next()
+    if (c.res.headers.get('content-type')?.includes('text/html') === true) {
+      c.res.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+    }
+  })
 
   // ───────────────────────────── 探针 ─────────────────────────────
 
@@ -220,7 +240,10 @@ export function createApp(options: AppOptions = {}): Hono {
     try {
       const { value: goals } = withGoalsIndex(resolveRoot(), (db) => readGoals(db))
       const today = todayLocal()
-      return c.json({ goals: goals.map((goal) => toGoalListItem(goal, today)).reverse() })
+      const includeArchived =
+        c.req.query('includeArchived') === '1' || c.req.query('includeArchived') === 'true'
+      const visible = includeArchived ? goals : goals.filter((goal) => goal.status !== '已归档')
+      return c.json({ goals: visible.map((goal) => toGoalListItem(goal, today)).reverse() })
     } catch (error) {
       return c.json({ error: toErrorBody(error) }, 500)
     }
@@ -277,6 +300,64 @@ export function createApp(options: AppOptions = {}): Hono {
     }
 
     return c.json({ goal: toGoalListItem(created) }, 201)
+  })
+
+  app.patch('/api/goals/:id', async (c) => {
+    try {
+      const payload = await c.req.json().catch(() => null)
+      const parsed = updateGoalSchema.safeParse(payload)
+      if (!parsed.success) {
+        return c.json(
+          { error: { code: 'INVALID_INPUT', message: formatZodError(parsed.error) } },
+          400,
+        )
+      }
+      const root = resolveRoot()
+      const goal = updateGoal(root, c.req.param('id'), parsed.data)
+      forceRebuild(root)
+      return c.json({ goal: toGoalListItem(goal) })
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
+  })
+
+  app.delete('/api/goals/:id', (c) => {
+    try {
+      const root = resolveRoot()
+      const result = trashGoal(root, c.req.param('id'))
+      forceRebuild(root)
+      return c.json(result)
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
+  })
+
+  app.get('/api/trash', (c) => {
+    try {
+      return c.json({ entries: listTrash(resolveRoot()) })
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
+  })
+
+  app.post('/api/trash/:trashId/restore', (c) => {
+    try {
+      const root = resolveRoot()
+      const result = restoreTrash(root, c.req.param('trashId'))
+      forceRebuild(root)
+      return c.json(result)
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
+  })
+
+  app.delete('/api/trash/:trashId', (c) => {
+    try {
+      purgeTrash(resolveRoot(), c.req.param('trashId'))
+      return c.body(null, 204)
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
   })
 
   // ─────────────────────── 模型自检（阶段 4） ───────────────────────
@@ -635,20 +716,19 @@ export function createApp(options: AppOptions = {}): Hono {
       const questions = listQuestions(root, goal.id)
       const byId = new Map(questions.map((question) => [question.id, question]))
       const ranked = listResourcesRanked(root)
+      const titles = new Map(listAllNodes(root).map((node) => [node.id, node.title]))
 
       return c.json({
         stages: stages.map((stage) => ({
           ...toStageDto(stage),
+          nodes: stage.nodeIds.map((id) => ({ id, title: titles.get(id) ?? id })),
           questions: stage.questionIds
             .map((id) => byId.get(id))
             .filter((question): question is NonNullable<typeof question> => question !== undefined)
             .map(toQuestionDto),
-          resources: ranked
-            .filter(
-              (resource) =>
-                resource.nodeId !== undefined && stage.nodeIds.includes(resource.nodeId),
-            )
-            .map((resource) => ({
+          resources: ranked.flatMap((resource) => {
+            const nodeIds = stage.nodeIds.filter((id) => resource.nodeIds.includes(id))
+            return nodeIds.map((nodeId) => ({
               id: resource.id,
               title: resource.title,
               ...(resource.url === undefined ? {} : { url: resource.url }),
@@ -657,7 +737,11 @@ export function createApp(options: AppOptions = {}): Hono {
               ...(resource.durationMin === undefined ? {} : { durationMin: resource.durationMin }),
               level: resource.level,
               media: resource.media,
-            })),
+              nodeId,
+              nodeTitle: titles.get(nodeId) ?? nodeId,
+              ...(resource.unverified === true ? { unverified: true } : {}),
+            }))
+          }),
         })),
         questions: stages
           .flatMap((stage) => stage.questionIds)
@@ -763,6 +847,118 @@ export function createApp(options: AppOptions = {}): Hono {
           timeBudget: profile.timeBudget,
         },
       })
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
+  })
+
+  // ───────────────────── 资源随路径自动补齐（阶段 13） ─────────────────────
+
+  app.post('/api/goals/:id/resources/auto', async (c) => {
+    const root = resolveRoot()
+    const goal = requireGoal(root, c.req.param('id'))
+    const parsed = autoResourcesSchema.safeParse(await readJsonBody(c))
+    if (!parsed.success) {
+      return c.json(
+        { error: { code: 'INVALID_INPUT', message: formatZodError(parsed.error) } },
+        400,
+      )
+    }
+
+    const env = runtimeEnv()
+    const searchConfigured = (env['TAVILY_API_KEY'] ?? '').trim() !== ''
+    const config = resolveLlmConfig(env)
+    const signal = c.req.raw.signal
+
+    return streamSSE(c, async (stream) => {
+      try {
+        await autoResources({
+          root,
+          goalId: goal.id,
+          ...(parsed.data.mode === undefined ? {} : { mode: parsed.data.mode }),
+          ...(parsed.data.nodeIds === undefined ? {} : { nodeIds: parsed.data.nodeIds }),
+          search: searchConfigured
+            ? createTavilyProvider({
+                env,
+                ...(options.searchDeps?.fetch === undefined
+                  ? {}
+                  : { fetchImpl: options.searchDeps.fetch }),
+              })
+            : null,
+          llm: config.configured ? { config, deps: recordedDeps(root, goal.id, '资源') } : null,
+          signal,
+          onEvent: async (event) => {
+            if (signal.aborted) return
+            await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+          },
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        try {
+          await stream.writeSSE({
+            event: 'error',
+            data: JSON.stringify({ type: 'error', message }),
+          })
+        } catch {
+          /* 客户端已断开 */
+        }
+      }
+    })
+  })
+
+  app.delete('/api/resources/:id', (c) => {
+    try {
+      deleteResource(resolveRoot(), c.req.param('id'))
+      return c.body(null, 204)
+    } catch (error) {
+      return c.json({ error: toErrorBody(error) }, errorStatus(error))
+    }
+  })
+
+  app.get('/api/resources', (c) => {
+    try {
+      const root = resolveRoot()
+      const goalFilter = c.req.query('goalId')
+      const nodes = listAllNodes(root)
+      const nodeTitles = new Map(nodes.map((node) => [node.id, node.title]))
+      const nodeGoals = new Map(nodes.map((node) => [node.id, node.goalId]))
+      const goalTitles = new Map(listGoals(root).map((goal) => [goal.id, goal.title]))
+
+      const resources = listAllResources(root)
+        .filter(
+          (resource) =>
+            goalFilter === undefined ||
+            resource.nodeIds.some((nodeId) => nodeGoals.get(nodeId) === goalFilter),
+        )
+        .map((resource) => {
+          const primaryNode = resource.nodeIds[0]
+          const goalId = resource.nodeIds
+            .map((nodeId) => nodeGoals.get(nodeId))
+            .find((id) => id !== undefined)
+          return {
+            id: resource.id,
+            title: resource.title,
+            ...(resource.url === undefined ? {} : { url: resource.url }),
+            ...(primaryNode === undefined
+              ? {}
+              : { nodeId: primaryNode, nodeTitle: nodeTitles.get(primaryNode) ?? primaryNode }),
+            nodeIds: resource.nodeIds,
+            nodeTitles: resource.nodeIds.map((id) => nodeTitles.get(id) ?? id),
+            ...(resource.unverified === true ? { unverified: true } : {}),
+            level: resource.level,
+            media: resource.media,
+            ...(resource.platform === undefined ? {} : { platform: resource.platform }),
+            ...(resource.price === undefined ? {} : { price: resource.price }),
+            ...(resource.durationMin === undefined ? {} : { durationMin: resource.durationMin }),
+            ...(goalId === undefined
+              ? {}
+              : { goalId, goalTitle: goalTitles.get(goalId) ?? goalId }),
+            relativePath: resource.relativePath,
+            createdAt: resource.createdAt,
+          }
+        })
+
+      return c.json({ resources })
     } catch (error) {
       return c.json({ error: toErrorBody(error) }, errorStatus(error))
     }

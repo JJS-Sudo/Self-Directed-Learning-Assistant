@@ -4,8 +4,15 @@ import type { GoalListItem } from '@shared/goals'
 import type { MapNodeDto } from '@shared/map'
 import type { GeneratedStageDto, PathEstimateDto, PathPreviewDto, PathViewDto } from '@shared/path'
 import { PathStageEditor } from '../components/PathStageEditor'
+import { streamAutoResources, type AutoResourceEvent } from '../lib/stream'
 
-type Busy = null | 'estimate' | 'preview' | 'commit'
+type Busy = null | 'estimate' | 'preview' | 'commit' | 'resources'
+
+interface ResourceProgress {
+  done: number
+  total: number
+  nodeTitle: string
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -31,6 +38,8 @@ export function PathPage() {
   const [busy, setBusy] = useState<Busy>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [progress, setProgress] = useState<ResourceProgress | null>(null)
+  const [searchConfigured, setSearchConfigured] = useState<boolean | null>(null)
 
   const loadView = useCallback(async (id: string) => {
     if (id === '') return
@@ -104,6 +113,50 @@ export function PathPage() {
     }
   }
 
+  const runAuto = useCallback(
+    async (mode: 'fill' | 'refresh' | 'retry', nodeIds?: string[]): Promise<void> => {
+      setError(null)
+      setBusy('resources')
+      setProgress(null)
+      try {
+        const handle = (event: AutoResourceEvent): void => {
+          if (event.type === 'start') {
+            setSearchConfigured(event.searchConfigured ?? null)
+            setProgress({ done: 0, total: event.total ?? 0, nodeTitle: '' })
+          } else if (event.type === 'progress') {
+            setProgress({
+              done: event.done ?? 0,
+              total: event.total ?? 0,
+              nodeTitle: event.nodeTitle ?? '',
+            })
+          } else if (event.type === 'warning' && event.message !== undefined) {
+            setNotice(event.message)
+          } else if (event.type === 'done') {
+            setNotice(
+              `资源：新增 ${event.created ?? 0} 条、共享 ${event.linked ?? 0} 条、跳过 ${
+                event.skipped ?? 0
+              } 条${(event.failures ?? 0) > 0 ? `、${event.failures} 个节点未找到` : ''}`,
+            )
+          } else if (event.type === 'error') {
+            setError(event.message ?? '资源检索失败')
+          }
+        }
+        await streamAutoResources(
+          goalId,
+          { mode, ...(nodeIds === undefined ? {} : { nodeIds }) },
+          handle,
+        )
+        await loadView(goalId)
+      } catch (cause) {
+        setError(messageOf(cause))
+      } finally {
+        setBusy(null)
+        setProgress(null)
+      }
+    },
+    [goalId, loadView],
+  )
+
   const runCommit = async (): Promise<void> => {
     if (preview === null) return
     setError(null)
@@ -120,6 +173,8 @@ export function PathPage() {
       setPreviewWarnings([])
       setNotice(`已创建 ${body.createdStages} 段、${body.createdQuestions} 道题`)
       await loadView(goalId)
+      setBusy(null)
+      await runAuto('fill')
     } catch (cause) {
       setError(messageOf(cause))
     } finally {
@@ -167,6 +222,14 @@ export function PathPage() {
             >
               {busy === 'preview' ? '生成中…' : '生成路径'}
             </button>
+            <button
+              type="button"
+              className="button"
+              disabled={busy !== null || view.stages.length === 0}
+              onClick={() => void runAuto('refresh')}
+            >
+              {busy === 'resources' ? '补齐中…' : '重新补齐资源'}
+            </button>
             {estimate !== null && (
               <span className="hint">
                 约 {estimate.estimatedTokens} token · ¥{estimate.costCny}（估算，{estimate.stages}{' '}
@@ -181,6 +244,33 @@ export function PathPage() {
             </p>
           )}
           {notice !== null && <p className="hint">{notice}</p>}
+
+          {busy === 'resources' && progress !== null && (
+            <div className="resource-progress" aria-live="polite">
+              <p className="hint">
+                正在为 {progress.done}/{progress.total} 个节点找资源
+                {progress.nodeTitle === '' ? '' : `：${progress.nodeTitle}`}
+              </p>
+              <div className="progress-track">
+                <div
+                  className="progress-fill"
+                  style={{
+                    width:
+                      progress.total === 0
+                        ? '0%'
+                        : `${Math.round((progress.done / progress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {searchConfigured === false && (
+            <p className="hint">
+              未配置 Tavily，当前使用 B 站 / Bing 等搜索页链接（未验证）。
+              <Link to="/settings">去配置</Link>
+            </p>
+          )}
         </div>
       )}
 
@@ -237,6 +327,8 @@ export function PathPage() {
           <div className="path-grid">
             {view.stages.map((stage) => {
               const resources = stage.resources ?? []
+              const stageNodes =
+                stage.nodes ?? stage.nodeIds.map((id) => ({ id, title: titleOf(id) }))
               const questions =
                 stage.questions ??
                 stage.questionIds
@@ -258,34 +350,59 @@ export function PathPage() {
 
                     <div className="stage-resources">
                       <p className="column-title">资源（{resources.length}）</p>
-                      {resources.length === 0 ? (
-                        <p className="hint">本段暂无资源</p>
+                      {stageNodes.length === 0 ? (
+                        <p className="hint">本段没有节点</p>
                       ) : (
-                        <ul className="resource-list">
-                          {resources.map((resource) => (
-                            <li key={resource.id}>
-                              <span className="resource-meta">
-                                {resource.platform ?? '平台未知'} ·{' '}
-                                {resource.price ??
-                                  (resource.durationMin === undefined
-                                    ? '价格未知'
-                                    : `${resource.durationMin} 分钟`)}
-                              </span>
-                              {resource.url === undefined ? (
-                                <span className="resource-title">{resource.title}</span>
+                        stageNodes.map((node) => {
+                          const list = resources.filter((resource) => resource.nodeId === node.id)
+                          return (
+                            <div className="node-resource-group" key={node.id}>
+                              <p className="node-resource-title">{node.title}</p>
+                              {list.length === 0 ? (
+                                <p className="hint">
+                                  未找到资源
+                                  <button
+                                    type="button"
+                                    className="link"
+                                    disabled={busy !== null}
+                                    onClick={() => void runAuto('retry', [node.id])}
+                                  >
+                                    重试
+                                  </button>
+                                </p>
                               ) : (
-                                <a
-                                  className="resource-title"
-                                  href={resource.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  {resource.title}
-                                </a>
+                                <ul className="resource-list">
+                                  {list.map((resource) => (
+                                    <li key={`${resource.id}-${node.id}`}>
+                                      {resource.unverified === true && (
+                                        <span className="badge-warn">未验证</span>
+                                      )}
+                                      <span className="resource-meta">
+                                        {resource.platform ?? '平台未知'} ·{' '}
+                                        {resource.price ??
+                                          (resource.durationMin === undefined
+                                            ? '价格未知'
+                                            : `${resource.durationMin} 分钟`)}
+                                      </span>
+                                      {resource.url === undefined ? (
+                                        <span className="resource-title">{resource.title}</span>
+                                      ) : (
+                                        <a
+                                          className="resource-title"
+                                          href={resource.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          {resource.title}
+                                        </a>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
                               )}
-                            </li>
-                          ))}
-                        </ul>
+                            </div>
+                          )
+                        })
                       )}
                     </div>
                   </article>

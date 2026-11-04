@@ -3,7 +3,12 @@ import { LEVELS, MEDIA_TYPES } from '../domain/vocabulary.js'
 import type { RankedResource } from '../domain/resources.js'
 
 export const previewResourcesSchema = z.object({
-  nodeIds: z.array(z.string().min(1)).min(1, '至少选一个节点').max(5, '一次最多检索 5 个节点'),
+  nodeIds: z.array(z.string().min(1)).min(1, '至少选一个节点').max(200, '一次最多检索 200 个节点'),
+})
+
+export const autoResourcesSchema = z.object({
+  nodeIds: z.array(z.string().min(1)).min(1).max(200).optional(),
+  mode: z.enum(['fill', 'refresh', 'retry']).optional(),
 })
 
 export const commitResourcesSchema = z.object({
@@ -19,7 +24,7 @@ export const commitResourcesSchema = z.object({
       }),
     )
     .min(1, '至少一条资源')
-    .max(50),
+    .max(500),
 })
 
 export type CommitResourcesInput = z.infer<typeof commitResourcesSchema>
@@ -34,6 +39,8 @@ export function toResourceDto(
   url?: string
   nodeId?: string
   nodeTitle?: string
+  nodeIds: string[]
+  unverified?: boolean
   level: string
   media: string
   durationMin?: number
@@ -46,6 +53,8 @@ export function toResourceDto(
     ...(resource.url === undefined ? {} : { url: resource.url }),
     ...(resource.nodeId === undefined ? {} : { nodeId: resource.nodeId }),
     ...(resource.nodeId === undefined ? {} : { nodeTitle: nodeTitle(resource.nodeId) }),
+    nodeIds: resource.nodeIds,
+    ...(resource.unverified === true ? { unverified: true } : {}),
     level: resource.level,
     media: resource.media,
     ...(resource.durationMin === undefined ? {} : { durationMin: resource.durationMin }),

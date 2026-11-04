@@ -12,6 +12,8 @@ export const MEDIA_PREFERENCES = ['视频', '文字', '不限'] as const
 export const MASTERY_VALUES = ['未学', '在学', '已掌握'] as const
 /** 目标类型：`激励性` 是总目标（要求期限），`常规` 是普通目标 */
 export const GOAL_KINDS = ['激励性', '常规'] as const
+/** 目标生命周期状态；`已归档` 只隐藏，不移动文件 */
+export const GOAL_STATUSES = ['在用', '暂停', '已完成', '已归档'] as const
 export const QUESTION_KINDS = ['封闭', '开放'] as const
 export const ASSESSMENT_MODES = ['复述', '做题'] as const
 /** `mode: 复述` 的 `result` 取值域 */

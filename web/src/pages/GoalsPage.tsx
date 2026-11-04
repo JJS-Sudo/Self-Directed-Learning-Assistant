@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { GoalListItem } from '@shared/goals'
+import { GoalEditDialog } from '../components/GoalEditDialog'
 import { HealthCard } from '../components/HealthCard'
 import { LlmPing } from '../components/LlmPing'
+import { TrashPanel } from '../components/TrashPanel'
 
 type ListState =
   | { kind: 'loading' }
@@ -22,17 +24,22 @@ export function GoalsPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [editing, setEditing] = useState<GoalListItem | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch('/api/goals')
+      const response = await fetch(`/api/goals${showArchived ? '?includeArchived=1' : ''}`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = (await response.json()) as { goals: GoalListItem[] }
       setState({ kind: 'ready', goals: body.goals })
     } catch (error) {
       setState({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
     }
-  }, [])
+  }, [showArchived])
 
   useEffect(() => {
     void load()
@@ -72,6 +79,50 @@ export function GoalsPage() {
       setFormError(error instanceof Error ? error.message : String(error))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const removeGoal = async (goal: GoalListItem): Promise<void> => {
+    setListError(null)
+    setNotice(null)
+    try {
+      const [map, path, resources] = await Promise.all([
+        fetch(`/api/goals/${goal.id}/map`).then((response) =>
+          response.ok ? (response.json() as Promise<{ nodes?: unknown[] }>) : null,
+        ),
+        fetch(`/api/goals/${goal.id}/path`).then((response) =>
+          response.ok ? (response.json() as Promise<{ stages?: unknown[] }>) : null,
+        ),
+        fetch(`/api/goals/${goal.id}/resources`).then((response) =>
+          response.ok ? (response.json() as Promise<{ resources?: unknown[] }>) : null,
+        ),
+      ])
+      const nodes = map?.nodes?.length ?? 0
+      const stages = path?.stages?.length ?? 0
+      const resourceCount = resources?.resources?.length ?? 0
+
+      const confirmed = window.confirm(
+        `删除目标「${goal.title}」？\n\n` +
+          `将把 ${nodes} 个节点、${stages} 段路径、${resourceCount} 条资源中的独占项移入回收站；\n` +
+          `被其他目标共享的资源只解除关联，文件保留。\n\n` +
+          `删除后可在回收站恢复。`,
+      )
+      if (!confirmed) return
+
+      setDeletingId(goal.id)
+      const response = await fetch(`/api/goals/${goal.id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: { message?: string }
+        } | null
+        throw new Error(body?.error?.message ?? `HTTP ${response.status}`)
+      }
+      setNotice(`已把「${goal.title}」移入回收站`)
+      await load()
+    } catch (cause) {
+      setListError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -144,7 +195,24 @@ export function GoalsPage() {
       </form>
 
       <div className="goal-list-wrap">
-        <p className="upcoming-label">我的目标</p>
+        <div className="goal-list-head">
+          <p className="upcoming-label">我的目标</p>
+          <label className="archive-toggle">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+            />
+            显示已归档
+          </label>
+        </div>
+
+        {notice !== null && <p className="hint">{notice}</p>}
+        {listError !== null && (
+          <p className="form-error" role="alert">
+            {listError}
+          </p>
+        )}
 
         {state.kind === 'loading' && <p className="hint">正在读取…</p>}
 
@@ -165,28 +233,83 @@ export function GoalsPage() {
           <ul className="goal-list">
             {state.goals.map((goal) => (
               <li key={goal.id} className="goal-item">
-                <span className="goal-title">{goal.title}</span>
-                <span className="goal-meta">
-                  <span className="phase-tag">{goal.kind}</span>
-                  <span>{goal.deadline ?? '无期限'}</span>
-                  {daysLeftText(goal) !== '' && (
-                    <span
-                      className={goal.daysLeft !== undefined && goal.daysLeft < 0 ? 'overdue' : ''}
-                    >
-                      {daysLeftText(goal)}
+                <div className="goal-main">
+                  <span className="goal-title">{goal.title}</span>
+                  <span className="goal-meta">
+                    <span className="phase-tag">{goal.kind}</span>
+                    <span className={`status-badge status-${statusTone(goal.status)}`}>
+                      {goal.status}
                     </span>
-                  )}
-                </span>
+                    <span>{goal.deadline ?? '无期限'}</span>
+                    {daysLeftText(goal) !== '' && (
+                      <span
+                        className={
+                          goal.daysLeft !== undefined && goal.daysLeft < 0 ? 'overdue' : ''
+                        }
+                      >
+                        {daysLeftText(goal)}
+                      </span>
+                    )}
+                    {goal.updatedAt !== undefined && (
+                      <span className="hint">
+                        更新 {new Date(goal.updatedAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                <details className="goal-menu">
+                  <summary aria-label={`更多操作：${goal.title}`}>⋯</summary>
+                  <div className="goal-menu-panel">
+                    <button type="button" className="link" onClick={() => setEditing(goal)}>
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      className="link danger"
+                      disabled={deletingId === goal.id}
+                      onClick={() => void removeGoal(goal)}
+                    >
+                      {deletingId === goal.id ? '删除中…' : '删除'}
+                    </button>
+                  </div>
+                </details>
               </li>
             ))}
           </ul>
         )}
       </div>
 
+      <TrashPanel
+        onRestored={() => {
+          setNotice('已从回收站恢复')
+          void load()
+        }}
+      />
+
+      {editing !== null && (
+        <GoalEditDialog
+          goal={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null)
+            setNotice('目标已更新')
+            void load()
+          }}
+        />
+      )}
+
       <HealthCard />
       <LlmPing />
     </section>
   )
+}
+
+function statusTone(status: string): string {
+  if (status === '暂停') return 'paused'
+  if (status === '已完成') return 'done'
+  if (status === '已归档') return 'archived'
+  return 'active'
 }
 
 function daysLeftText(goal: GoalListItem): string {

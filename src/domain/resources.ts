@@ -1,7 +1,9 @@
+import { unlinkSync } from 'node:fs'
+import { join } from 'node:path'
 import { linkId, wikilink, type Frontmatter } from '../vault/document.js'
 import { VaultError } from '../vault/errors.js'
 import { listDocuments, updateDocument, writeDocument } from '../vault/io.js'
-import { requireNode } from './nodes.js'
+import { listAllNodes, requireNode } from './nodes.js'
 import { readProfileOrDefault } from './profile.js'
 import { rankResources, rankReasonOf } from './ranking.js'
 import { LEVELS, MEDIA_TYPES, assertOneOf } from './vocabulary.js'
@@ -23,7 +25,12 @@ export const RESOURCES_DIR = '40-资源'
 export interface ResourceSummary {
   id: string
   title: string
+  /** 兼容字段：等于 nodeIds[0] */
   nodeId?: string
+  /** 资源挂载的全部节点（同一 URL 可服务多个节点） */
+  nodeIds: string[]
+  /** 平台搜索页兜底链接标记；真实检索到的资源为 false/缺省 */
+  unverified?: boolean
   /** 视频 / 文字 */
   media: string
   url?: string
@@ -60,6 +67,8 @@ export interface CreateResourceInput {
   durationMin?: number | string
   platform?: string
   price?: string
+  /** 平台搜索页兜底链接 */
+  unverified?: boolean
 }
 
 export interface RankedResource extends ResourceSummary {
@@ -78,6 +87,7 @@ export function createResource(input: CreateResourceInput): ResourceSummary {
 
   const frontmatter: Frontmatter = {
     node: wikilink(node.id, node.title),
+    nodes: [wikilink(node.id, node.title)],
     media,
     tags,
     level,
@@ -87,6 +97,7 @@ export function createResource(input: CreateResourceInput): ResourceSummary {
   if (durationMin !== undefined) frontmatter['duration_min'] = durationMin
   if (platform !== undefined) frontmatter['platform'] = platform
   if (price !== undefined) frontmatter['price'] = price
+  if (input.unverified === true) frontmatter['unverified'] = true
 
   frontmatter['rank_reason'] = rankReasonOf(readProfileOrDefault(input.root), {
     id: '',
@@ -117,7 +128,7 @@ export function listResources(root: string, filter: ResourceFilter = {}): Resour
   const nodeIds = filter.nodeIds
   if (nodeIds === undefined) return all
   const wanted = new Set(nodeIds)
-  return all.filter((resource) => resource.nodeId !== undefined && wanted.has(resource.nodeId))
+  return all.filter((resource) => resource.nodeIds.some((id) => wanted.has(id)))
 }
 
 export function findResource(root: string, id: string): ResourceSummary | undefined {
@@ -130,6 +141,54 @@ export function requireResource(root: string, id: string): ResourceSummary {
     throw new VaultError('NOT_FOUND', `资源不存在：${id}`)
   }
   return resource
+}
+
+/** 把已有资源追加到另一个节点；已关联则返回 false（幂等） */
+export function attachNodeToResource(root: string, resourceId: string, nodeId: string): boolean {
+  const resource = requireResource(root, resourceId)
+  if (resource.nodeIds.includes(nodeId)) return false
+
+  const node = requireNode(root, nodeId)
+  const titles = new Map(listAllNodes(root).map((item) => [item.id, item.title]))
+  const ids = [...resource.nodeIds, nodeId]
+  const links = ids.map((id) => wikilink(id, titles.get(id) ?? id))
+  const first = links[0] ?? wikilink(node.id, node.title)
+  updateDocument({
+    root,
+    relativePath: resource.relativePath,
+    frontmatter: { node: first, nodes: links },
+  })
+  return true
+}
+
+/** 从资源上移除一个节点；没有节点后删除文件 */
+export function detachNodeFromResource(
+  root: string,
+  resourceId: string,
+  nodeId: string,
+): 'deleted' | 'detached' | 'unchanged' {
+  const resource = requireResource(root, resourceId)
+  if (!resource.nodeIds.includes(nodeId)) return 'unchanged'
+
+  const ids = resource.nodeIds.filter((id) => id !== nodeId)
+  if (ids.length === 0) {
+    unlinkSync(join(root, resource.relativePath))
+    return 'deleted'
+  }
+
+  const titles = new Map(listAllNodes(root).map((item) => [item.id, item.title]))
+  const links = ids.map((id) => wikilink(id, titles.get(id) ?? id))
+  updateDocument({
+    root,
+    relativePath: resource.relativePath,
+    frontmatter: { node: links[0] ?? '', nodes: links },
+  })
+  return 'detached'
+}
+
+export function deleteResource(root: string, id: string): void {
+  const resource = requireResource(root, id)
+  unlinkSync(join(root, resource.relativePath))
 }
 
 /** 按当前画像排序（只算不写盘）：确定性由纯函数 `rankResources` 保证 */
@@ -162,7 +221,15 @@ function rankWithProfile(root: string, filter: ResourceFilter) {
 }
 
 function toResourceSummary(relativePath: string, data: Frontmatter): ResourceSummary {
-  const nodeId = linkId(data['node'])
+  const rawNodes = data['nodes']
+  const nodeIds: string[] = Array.isArray(rawNodes)
+    ? rawNodes
+        .map((item) => linkId(item))
+        .filter((id): id is string => id !== undefined && id !== '')
+    : []
+  const legacy = linkId(data['node'])
+  if (legacy !== undefined && legacy !== '' && !nodeIds.includes(legacy)) nodeIds.unshift(legacy)
+  const nodeId = nodeIds[0]
   const rawUrl = data['url']
   const url = typeof rawUrl === 'string' && rawUrl.trim() !== '' ? rawUrl.trim() : undefined
   const durationMin = lenientPositiveInt(data['duration_min'])
@@ -172,7 +239,9 @@ function toResourceSummary(relativePath: string, data: Frontmatter): ResourceSum
   return {
     id: String(data['id'] ?? ''),
     title: String(data['title'] ?? ''),
-    ...(nodeId !== undefined ? { nodeId } : {}),
+    ...(nodeId === undefined ? {} : { nodeId }),
+    nodeIds,
+    ...(data['unverified'] === true ? { unverified: true } : {}),
     media: String(data['media'] ?? ''),
     ...(url !== undefined ? { url } : {}),
     tags: lenientTextArray(data['tags']),

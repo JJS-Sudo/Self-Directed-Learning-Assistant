@@ -946,3 +946,20 @@ textarea:focus {
     width: 100%;
   }
 }
+
+/* 目标卡片：卡片本身需要 overflow visible，否则「⋯」菜单会被裁掉 */
+.goal-item {
+  overflow: visible;
+}
+
+.goal-menu {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.75rem;
+  z-index: 10;
+}
+
+.goal-main {
+  width: 100%;
+  padding-right: 2rem;
+}

@@ -20,7 +20,6 @@ const REMOVED_ROUTES = [
   '/questions',
   '/api/nodes',
   '/api/events',
-  '/api/resources',
   '/api/questions',
   '/api/assessments',
   '/api/retrospectives',
