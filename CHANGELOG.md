@@ -2,6 +2,7 @@
 
 ## 2026-11-04
 
+- 修复：AI 自建知识地图生成后无法落盘（候选边内部字段 `fromTempId` / `toTempId` 未映射为接口的 `from` / `to`，提交被 400 拒绝）；补回归测试，版本升 1.1.1。
 - 新增：Electron 桌面版（1.1.0）—— 主进程内嵌 Hono 服务、动态端口、单实例；不需要 Node/Docker 即可双击使用。
 - 新增：桌面数据目录按安装形态区分 —— 安装版 `userData/vault`，Windows portable / Linux AppImage 用程序旁 `data/vault`；首启自动从 `seeds/` 建库。
 - 新增：桌面密钥用系统密钥链 `safeStorage` 加密，旧明文 `.sdl-secrets.json` 自动迁移；Web/Docker 仍保持明文兼容。

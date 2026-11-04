@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { MapNodeSummary, NodeLink } from '../domain/nodes.js'
 import { MASTERY_VALUES } from '../domain/vocabulary.js'
+import type { RawEdge } from '../map-gen/types.js'
 import type { LinkType, MapNodeDto } from '../shared/map.js'
 
 export const materialSchema = z.object({
@@ -76,6 +77,13 @@ export function chunkSizeFromEnv(env: NodeJS.ProcessEnv): number {
 
 function toLinks(links: readonly NodeLink[]): { to: string; type: LinkType }[] {
   return links.map((link) => ({ to: link.to, type: link.type }))
+}
+
+/** 内部边用 fromTempId/toTempId；接口统一成 from/to */
+export function toEdgeDtos(
+  edges: readonly RawEdge[],
+): { from: string; to: string; type: LinkType }[] {
+  return edges.map((edge) => ({ from: edge.fromTempId, to: edge.toTempId, type: edge.type }))
 }
 
 export function toMapNodeDto(node: MapNodeSummary): MapNodeDto {

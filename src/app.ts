@@ -6,6 +6,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { createGoalSchema, formatZodError, toGoalListItem } from './api/goals.js'
 import { buildHealthReport } from './api/health.js'
 import {
+  toEdgeDtos,
   candidatesSchema,
   chunkSizeFromEnv,
   createNodeSchema,
@@ -331,7 +332,7 @@ export function createApp(options: AppOptions = {}): Hono {
       )
       return c.json({
         candidates: result.candidates,
-        edges: result.edges,
+        edges: toEdgeDtos(result.edges),
         warnings: result.warnings,
         research: { used: research.used, sources: research.sources },
         estimate: result.estimate,
@@ -368,7 +369,7 @@ export function createApp(options: AppOptions = {}): Hono {
 
       return c.json({
         candidates: result.candidates,
-        edges: result.edges,
+        edges: toEdgeDtos(result.edges),
         warnings: result.warnings,
         estimate: result.estimate,
       })
