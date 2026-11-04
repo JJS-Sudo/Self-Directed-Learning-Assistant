@@ -7,6 +7,8 @@ export interface SourceStamp {
   /** 目标目录里 `.md` 的最大 mtime（毫秒）；空目录为 0 */
   latestMtimeMs: number
   fileCount: number
+  /** 文件总字节数：mtime 分辨率不足时也能发现内容变化 */
+  totalSize: number
 }
 
 export interface StoredGoal {
@@ -28,19 +30,21 @@ export function describeSource(root: string): SourceStamp {
   try {
     const files = readdirSync(dir).filter((name) => name.endsWith('.md'))
     let latestMtimeMs = 0
+    let totalSize = 0
     for (const name of files) {
       const stat = statSync(join(dir, name))
       if (stat.mtimeMs > latestMtimeMs) latestMtimeMs = stat.mtimeMs
+      totalSize += stat.size
     }
-    return { latestMtimeMs, fileCount: files.length }
+    return { latestMtimeMs, fileCount: files.length, totalSize }
   } catch {
     // 目录还不存在：当作空快照，而不是抛错
-    return { latestMtimeMs: 0, fileCount: 0 }
+    return { latestMtimeMs: 0, fileCount: 0, totalSize: 0 }
   }
 }
 
 export function formatStamp(stamp: SourceStamp): string {
-  return `${Math.round(stamp.latestMtimeMs)}:${stamp.fileCount}`
+  return `${Math.round(stamp.latestMtimeMs)}:${stamp.fileCount}:${stamp.totalSize}`
 }
 
 export function readMeta(db: Database, key: string): string | undefined {
