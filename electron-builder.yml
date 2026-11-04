@@ -1,0 +1,44 @@
+appId: com.sdl.learning
+productName: 自我导向学习辅助器
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist-electron/**
+  - package.json
+extraResources:
+  - from: dist/web
+    to: web
+  - from: seeds
+    to: seeds
+asar: true
+npmRebuild: false
+compression: normal
+win:
+  target:
+    - nsis
+    - portable
+  icon: build/icon.png
+  artifactName: sdl-${version}-win-${arch}.${ext}
+portable:
+  artifactName: sdl-${version}-win-${arch}-portable.${ext}
+nsis:
+  oneClick: true
+  runAfterFinish: true
+  allowElevation: true
+  createDesktopShortcut: true
+  shortcutName: 自我导向学习辅助器
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.education
+  icon: build/icon.png
+  artifactName: sdl-${version}-mac-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+    - zip
+  category: Education
+  icon: build/icon.png
+  artifactName: sdl-${version}-linux-${arch}.${ext}

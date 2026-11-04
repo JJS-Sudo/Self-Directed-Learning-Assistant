@@ -1,0 +1,36 @@
+# 依赖与构建产物
+/node_modules
+/dist
+/dist-electron
+/release
+/out-tsc
+/tmp
+
+# npm 调试日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 编辑器
+.vscode/*
+
+# 私人学习数据：只留在本机，不进版本库；发布快照只用 seeds/
+/自我导向学习项目运行库/
+/.dsh/
+
+# npm run reset 前的自动快照
+/.sdl-backup
+
+# Playwright 产物
+/test-results
+/playwright-report
+
+# SQLite 索引：派生物，删掉会自动重建，不进版本库
+/自我导向学习项目运行库/.sdl-index.db*
+/vault/.sdl-index.db*
+
+# 默认回落库位置（只在 .sdlrc.json 缺失时才会用到）
+/vault
+
+# 页面里保存的 API key：绝不进版本库
+.sdl-secrets.json

@@ -1,0 +1,7 @@
+# 统一行尾为 LF。
+# 理由：知识地图 / 学习路径 / 复盘 的 md 与 canvas 是**派生物**（逐字节比较、幂等重算），
+# 行尾差异会造成永久 diff 噪声；库文件也要能在 Windows / macOS / Linux 之间原样往返。
+* text=auto eol=lf
+*.canvas text eol=lf
+*.png binary
+*.jpg binary

@@ -1,0 +1,85 @@
+/*
+ * 设计令牌：颜色、字体、间距、圆角、阴影。
+ * 规则：**只有这个文件允许出现字面颜色值**（#hex / rgb()），组件样式一律用变量。
+ * 视觉方向：抹茶绿 + 米白、玻璃质感、柔和光斑（参考 shadcn/ui、Origin UI、Linear）。
+ */
+:root {
+  color-scheme: light dark;
+
+  /* 颜色 */
+  --bg: #edf0e6;
+  --bg-2: #e2e8da;
+  --fg: #17201a;
+  --fg-soft: #39463d;
+  --muted: #6c786f;
+  --line: rgba(23, 32, 26, 0.09);
+  --line-strong: rgba(23, 32, 26, 0.16);
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-solid: #ffffff;
+  --surface-2: rgba(255, 255, 255, 0.45);
+  --accent: #2f6b4f;
+  --accent-2: #4f8f6c;
+  --accent-soft: rgba(47, 107, 79, 0.1);
+  --accent-ring: rgba(47, 107, 79, 0.28);
+  --on-accent: #ffffff;
+  --warn: #b23b31;
+  --warn-soft: rgba(178, 59, 49, 0.1);
+  --blob-a: rgba(104, 158, 120, 0.55);
+  --blob-b: rgba(214, 191, 138, 0.5);
+  --blob-c: rgba(98, 148, 164, 0.38);
+
+  /* 排版 */
+  --font-body:
+    16px/1.7 'Inter', 'MiSans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
+  --font-display:
+    'Inter', 'MiSans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --measure: 72rem;
+
+  /* 间距 */
+  --space-1: 0.35rem;
+  --space-2: 0.6rem;
+  --space-3: 1rem;
+  --space-4: 2.75rem;
+  --space-5: 3.5rem;
+
+  /* 圆角 */
+  --radius: 12px;
+  --radius-sm: 9px;
+  --radius-lg: 18px;
+
+  /* 阴影 */
+  --shadow-xs: 0 1px 2px rgba(20, 30, 24, 0.05);
+  --shadow-sm: 0 1px 2px rgba(20, 30, 24, 0.04), 0 10px 28px -14px rgba(20, 30, 24, 0.18);
+  --shadow-lg: 0 28px 64px -28px rgba(20, 30, 24, 0.28);
+  --glow: 0 0 0 1px rgba(47, 107, 79, 0.12), 0 12px 32px -14px rgba(47, 107, 79, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1410;
+    --bg-2: #121a15;
+    --fg: #e8efe9;
+    --fg-soft: #c3ccc5;
+    --muted: #8b978e;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --surface: rgba(22, 30, 25, 0.66);
+    --surface-solid: #161e19;
+    --surface-2: rgba(22, 30, 25, 0.4);
+    --accent: #85c9a5;
+    --accent-2: #6fb28f;
+    --accent-soft: rgba(133, 201, 165, 0.12);
+    --accent-ring: rgba(133, 201, 165, 0.3);
+    --on-accent: #0d1a13;
+    --warn: #e39286;
+    --warn-soft: rgba(227, 146, 134, 0.12);
+    --blob-a: rgba(64, 110, 84, 0.4);
+    --blob-b: rgba(120, 104, 64, 0.28);
+    --blob-c: rgba(56, 92, 102, 0.3);
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25), 0 12px 30px -16px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 30px 70px -30px rgba(0, 0, 0, 0.7);
+    --glow: 0 0 0 1px rgba(133, 201, 165, 0.14), 0 12px 32px -14px rgba(0, 0, 0, 0.5);
+  }
+}

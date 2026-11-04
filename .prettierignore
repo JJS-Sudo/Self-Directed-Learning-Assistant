@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+package-lock.json
+seeds/
+自我导向学习项目运行库/
+.dsh/
+test-results/
+playwright-report/

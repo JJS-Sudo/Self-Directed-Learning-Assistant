@@ -1,0 +1,25 @@
+name: sdl
+
+services:
+  app:
+    build: .
+    image: sdl:local
+    restart: unless-stopped
+    # 只绑本机回环：要对外暴露请显式改这里，并同时设置 SDL_ACCESS_TOKEN
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      # 容器内必须监听 0.0.0.0，Docker 的端口转发才进得来；
+      # 对外暴露由下面的 ports 绑定 127.0.0.1 限制。
+      HOST: 0.0.0.0
+      SDL_BEHIND_PROXY: '1'
+      PORT: '3000'
+      SDL_VAULT_PATH: /data/vault
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - sdl-data:/data
+
+volumes:
+  sdl-data:
